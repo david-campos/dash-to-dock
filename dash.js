@@ -200,6 +200,13 @@ var MyDash = GObject.registerClass({
         this._ensureAppIconVisibilityTimeoutId = 0;
         this._labelShowing = false;
 
+        this._lastPreviewed = null;
+        this._persistentDragMonitor = {
+            dragMotion: this._onDragMotion.bind(this),
+        };
+        DND.addDragMonitor(this._persistentDragMonitor);
+        // Main.xdndHandler.connect('drag-end', this._onDragLeave.bind(this));
+
         this._container = new MyDashActor();
         this._scrollView = new St.ScrollView({
             name: 'dashtodockDashScrollview',
@@ -303,6 +310,7 @@ var MyDash = GObject.registerClass({
     }
 
     _onDestroy() {
+        DND.removeDragMonitor(this._persistentDragMonitor);
         this.iconAnimator.destroy();
         this._signalsHandler.destroy();
     }
@@ -323,8 +331,47 @@ var MyDash = GObject.registerClass({
         return Dash.Dash.prototype._endDrag.call(this, ...arguments);
     }
 
-    _onDragMotion() {
-        return Dash.Dash.prototype._onDragMotion.call(this, ...arguments);
+    _onDragMotion(dragEvt) {
+        if (dragEvt.source instanceof AppDisplay.AppIcon) {
+            // The monitor in the original Dash can handle this
+            return DND.DragMotionResult.CONTINUE;
+        }
+        let children = this._box.get_children();
+        let numChildren = children.length;
+        let boxHeight = this._box.height;
+
+        let [, , y] = this.transform_stage_point(dragEvt.x, dragEvt.y);
+        let pos;
+        pos = Math.floor(y * numChildren / boxHeight);
+        if (pos < children.length){
+            const icon = children[pos].child._delegate;
+            if(this._lastPreviewed !== icon) {
+                this._closeLastPreview();
+                const windows = icon.getInterestingWindows();
+                if (windows.length > 1) {
+                    if (!icon._previewMenu || !icon._previewMenu.isOpen)
+                        icon._windowPreviews();
+                } else if (windows.length > 0) {
+                    // Activate the first window
+                    let w = windows[0];
+                    Main.activateWindow(w);
+                }
+                this._lastPreviewed = icon;
+            }
+        }
+        return DND.DragMotionResult.NO_DROP;
+    }
+
+    _onDragLeave() {
+        this._closeLastPreview();
+    }
+
+    _closeLastPreview() {
+        if (this._lastPreviewed && this._lastPreviewed._previewMenu
+            && this._lastPreviewed._previewMenu.isOpen) {
+            this._lastPreviewed._previewMenu.close();
+        }
+        this._lastPreviewed = null;
     }
 
     _appIdListToHash() {
